@@ -30,8 +30,8 @@ key. Errors are returned as RFC 7807 `application/problem+json`.
 
 ### OpenAPI
 
-Interactive docs (Swagger UI) are served at `/v1/swagger-ui`, and the raw
-OpenAPI 3 spec at `/v1/openapi.json`. Both are public (no token); the documented
+Interactive docs (Swagger UI) are served at `/v1/docs`, and the raw OpenAPI 3
+spec at `/v1/openapi.json`. Both are public (no token); the documented
 `/v1/galleries` operations still require the bearer token.
 
 ### Examples

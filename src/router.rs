@@ -69,7 +69,7 @@ pub fn build_router(state: AppState) -> Router {
     // `/health` and the API docs are public; everything else requires the token.
     let public = Router::new()
         .route("/health", get(health))
-        .merge(SwaggerUi::new("/v1/swagger-ui").url("/v1/openapi.json", ApiDoc::openapi()));
+        .merge(SwaggerUi::new("/v1/docs").url("/v1/openapi.json", ApiDoc::openapi()));
 
     let authed = Router::new()
         .route(

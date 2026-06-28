@@ -94,7 +94,8 @@ jobs:
       - name: Build Docker image
         run: |
           IMAGE_NAME=ghcr.io/${{ github.repository_owner }}/partal-gallery-api
-          docker build -t "$IMAGE_NAME:latest" .
+          GIT_COMMIT=$(git rev-parse --short HEAD)
+          docker build --build-arg GIT_COMMIT="$GIT_COMMIT" -t "$IMAGE_NAME:latest" .
 
       - name: Push to GHCR
         run: |

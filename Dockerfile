@@ -20,6 +20,9 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- -y --no-modify-path --default-toolchain none --profile minimal
 
+ARG GIT_COMMIT
+ENV GIT_COMMIT=${GIT_COMMIT}
+
 COPY rust-toolchain.toml ./
 RUN rustup show active-toolchain || rustup toolchain install
 

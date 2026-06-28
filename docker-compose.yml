@@ -1,5 +1,4 @@
 # Local development stack: Postgres + the gallery API built from this repo.
-# For production deployment see partal-infra-deployment.
 version: "3.8"
 services:
 

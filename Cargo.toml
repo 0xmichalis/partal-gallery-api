@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "A small HTTP API that stores Partal user galleries in Postgres (a self-hosted replacement for Supabase)."
 license = "Apache-2.0"
+build = "build.rs"
 
 [[bin]]
 name = "partal-gallery-api"

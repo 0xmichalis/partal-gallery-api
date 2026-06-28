@@ -41,9 +41,10 @@ async fn main() {
     let args = Args::parse();
     logging::init(args.log_level, should_enable_color(args.no_color));
     info!(
-        "Version: {} {}",
+        "Version: {} {} (commit {})",
         env!("CARGO_BIN_NAME"),
-        env!("CARGO_PKG_VERSION")
+        env!("CARGO_PKG_VERSION"),
+        env!("GIT_COMMIT")
     );
     info!("Initializing server with options: {:?}", args);
 

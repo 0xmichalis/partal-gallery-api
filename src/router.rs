@@ -10,8 +10,10 @@ use axum::{
 };
 use subtle::ConstantTimeEq;
 use tracing::error;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
-use crate::api::{GalleryResponse, ProblemJson, PutGalleryRequest};
+use crate::api::{ApiProblem, GalleryResponse, ProblemJson, PutGalleryRequest};
 use crate::db::Db;
 
 /// Maximum request body size for gallery uploads (10 MiB). Galleries store only
@@ -24,9 +26,50 @@ pub struct AppState {
     pub auth_token: Arc<String>,
 }
 
+#[derive(OpenApi)]
+#[openapi(
+    paths(health, get_gallery, put_gallery, delete_gallery),
+    components(schemas(GalleryResponse, PutGalleryRequest, ApiProblem)),
+    tags(
+        (name = "galleries", description = "Per-address gallery document storage"),
+        (name = "system", description = "Health and liveness")
+    ),
+    info(
+        title = "Partal Gallery API",
+        version = env!("CARGO_PKG_VERSION"),
+        description = "A thin, bearer-token authenticated per-address JSON document store for Partal user galleries (a self-hosted replacement for Supabase).",
+        license(name = "Apache-2.0", identifier = "Apache-2.0")
+    ),
+    security(("bearer_auth" = [])),
+    modifiers(&SecurityAddon)
+)]
+pub struct ApiDoc;
+
+struct SecurityAddon;
+
+impl utoipa::Modify for SecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        if let Some(components) = openapi.components.as_mut() {
+            components.add_security_scheme(
+                "bearer_auth",
+                utoipa::openapi::security::SecurityScheme::Http(
+                    utoipa::openapi::security::HttpBuilder::new()
+                        .scheme(utoipa::openapi::security::HttpAuthScheme::Bearer)
+                        .description(Some(
+                            "Shared bearer token (the server's GALLERY_AUTH_TOKEN)",
+                        ))
+                        .build(),
+                ),
+            );
+        }
+    }
+}
+
 pub fn build_router(state: AppState) -> Router {
-    // `/health` is public (liveness probe); everything else requires the token.
-    let public = Router::new().route("/health", get(health));
+    // `/health` and the API docs are public; everything else requires the token.
+    let public = Router::new()
+        .route("/health", get(health))
+        .merge(SwaggerUi::new("/v1/swagger-ui").url("/v1/openapi.json", ApiDoc::openapi()));
 
     let authed = Router::new()
         .route(
@@ -43,6 +86,12 @@ pub fn build_router(state: AppState) -> Router {
     public.merge(authed)
 }
 
+#[utoipa::path(
+    get,
+    path = "/health",
+    tag = "system",
+    responses((status = 200, description = "Service is healthy", body = String))
+)]
 async fn health() -> impl IntoResponse {
     (StatusCode::OK, "ok")
 }
@@ -86,6 +135,18 @@ fn normalize_address(address: &str) -> String {
     address.to_lowercase()
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/galleries/{address}",
+    tag = "galleries",
+    params(("address" = String, Path, description = "Wallet address (lowercased server-side)")),
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "Stored gallery document", body = GalleryResponse),
+        (status = 401, description = "Missing or invalid bearer token", body = ApiProblem),
+        (status = 404, description = "No gallery stored for this address", body = ApiProblem)
+    )
+)]
 async fn get_gallery(
     State(state): State<AppState>,
     Path(address): Path<String>,
@@ -103,6 +164,19 @@ async fn get_gallery(
     }
 }
 
+#[utoipa::path(
+    put,
+    path = "/v1/galleries/{address}",
+    tag = "galleries",
+    params(("address" = String, Path, description = "Wallet address (lowercased server-side)")),
+    request_body = PutGalleryRequest,
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 200, description = "Upserted gallery document", body = GalleryResponse),
+        (status = 400, description = "`data` is not a JSON array, or the body is invalid", body = ApiProblem),
+        (status = 401, description = "Missing or invalid bearer token", body = ApiProblem)
+    )
+)]
 async fn put_gallery(
     State(state): State<AppState>,
     Path(address): Path<String>,
@@ -137,6 +211,17 @@ async fn put_gallery(
     }
 }
 
+#[utoipa::path(
+    delete,
+    path = "/v1/galleries/{address}",
+    tag = "galleries",
+    params(("address" = String, Path, description = "Wallet address (lowercased server-side)")),
+    security(("bearer_auth" = [])),
+    responses(
+        (status = 204, description = "Deleted (idempotent — also 204 when nothing existed)"),
+        (status = 401, description = "Missing or invalid bearer token", body = ApiProblem)
+    )
+)]
 async fn delete_gallery(
     State(state): State<AppState>,
     Path(address): Path<String>,
@@ -156,6 +241,21 @@ fn internal_error(op: &str, address: &str, e: sqlx::Error) -> axum::response::Re
         None,
     )
     .into_response()
+}
+
+#[cfg(test)]
+mod openapi_tests {
+    use super::ApiDoc;
+    use utoipa::OpenApi;
+
+    #[test]
+    fn spec_documents_endpoints_and_security() {
+        let json = serde_json::to_string(&ApiDoc::openapi()).unwrap();
+        assert!(json.contains("Partal Gallery API"));
+        assert!(json.contains("/v1/galleries/{address}"));
+        assert!(json.contains("/health"));
+        assert!(json.contains("bearer_auth"));
+    }
 }
 
 #[cfg(test)]

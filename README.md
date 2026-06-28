@@ -28,6 +28,12 @@ All `/v1` endpoints require `Authorization: Bearer <GALLERY_AUTH_TOKEN>`.
 `{address}` is lowercased server-side before use, matching the legacy storage
 key. Errors are returned as RFC 7807 `application/problem+json`.
 
+### OpenAPI
+
+Interactive docs (Swagger UI) are served at `/v1/swagger-ui`, and the raw
+OpenAPI 3 spec at `/v1/openapi.json`. Both are public (no token); the documented
+`/v1/galleries` operations still require the bearer token.
+
 ### Examples
 
 ```bash

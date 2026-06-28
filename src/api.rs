@@ -2,18 +2,23 @@ use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::db::GalleryRow;
 
 /// Response body for a stored gallery document.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct GalleryResponse {
+    #[schema(example = "0xabc0000000000000000000000000000000000001")]
     pub address: String,
     /// The galleries for this address as an opaque JSON array (GalleryMinimal[]).
+    #[schema(value_type = Vec<Object>)]
     pub data: serde_json::Value,
     /// ISO 8601 timestamp.
+    #[schema(example = "2026-06-28T12:00:00+00:00")]
     pub created_at: String,
     /// ISO 8601 timestamp.
+    #[schema(example = "2026-06-28T12:00:00+00:00")]
     pub updated_at: String,
 }
 
@@ -29,14 +34,15 @@ impl From<GalleryRow> for GalleryResponse {
 }
 
 /// Request body for upserting a gallery document.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct PutGalleryRequest {
-    /// The full galleries array to store for the address.
+    /// The full galleries array to store for the address. Must be a JSON array.
+    #[schema(value_type = Vec<Object>)]
     pub data: serde_json::Value,
 }
 
 /// RFC 7807 problem+json error shape.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ApiProblem {
     #[serde(default = "default_problem_type")]
     pub r#type: String,

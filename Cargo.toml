@@ -24,3 +24,5 @@ time = { version = "0.3", features = ["macros", "formatting"] }
 tokio = { version = "1.28", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "time"] }
+utoipa = { version = "5", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "9", features = ["axum"] }

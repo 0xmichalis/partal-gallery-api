@@ -1,0 +1,10 @@
+# Build artifacts and local-only files; keep `migrations/` (embedded at build).
+target/
+.git/
+.github/
+.gitignore
+.dockerignore
+.env*
+Dockerfile
+docker-compose.yml
+README.md

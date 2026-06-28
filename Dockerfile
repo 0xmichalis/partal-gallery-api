@@ -1,0 +1,38 @@
+# Builder stage
+FROM docker.io/library/debian:bookworm-slim AS builder
+
+WORKDIR /usr/src/app
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    pkg-config=* \
+    libssl-dev=* \
+    git=* \
+    curl=* \
+    ca-certificates=* \
+    build-essential=* && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --no-modify-path --default-toolchain none --profile minimal
+
+COPY rust-toolchain.toml ./
+RUN rustup show active-toolchain || rustup toolchain install
+
+COPY . .
+
+RUN cargo build --release --bin partal-gallery-api
+
+
+# Runtime stage
+FROM gcr.io/distroless/cc-debian12:nonroot
+
+WORKDIR /app
+
+COPY --from=builder /usr/src/app/target/release/partal-gallery-api /app/partal-gallery-api
+
+CMD ["/app/partal-gallery-api", "--listen-address", "0.0.0.0:8091"]

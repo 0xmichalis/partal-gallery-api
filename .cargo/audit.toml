@@ -1,0 +1,7 @@
+[advisories]
+ignore = [
+    # rsa is an optional sqlx-mysql dependency recorded in Cargo.lock. This API
+    # enables only Postgres; sqlx-mysql and rsa are absent from the build graph.
+    # No patched rsa release is available.
+    "RUSTSEC-2023-0071",
+]

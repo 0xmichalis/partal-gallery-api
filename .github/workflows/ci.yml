@@ -12,85 +12,19 @@ on:
     - cron: "41 5 * * 1"
   workflow_dispatch:
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
-  fmt:
-    name: Check Format
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
-        run: |
-          rustup show active-toolchain || rustup toolchain install
-          rustup show
-
-      - name: Check Format
-        run: cargo fmt --all -- --check
-
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
-        run: |
-          rustup show active-toolchain || rustup toolchain install
-          rustup show
-
-      - name: Cache build artifacts
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-  test:
-    name: Run Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
-        run: |
-          rustup show active-toolchain || rustup toolchain install
-          rustup show
-
-      - name: Cache build artifacts
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Run tests
-        run: cargo test --all-features
+  checks:
+    uses: 0xmichalis/repo-tooling/.github/workflows/rust-ci.yml@657d4c30746413b9a6d4e18a76665b8b4dbd6eb1
+    with:
+      run-deny: false
 
   lint:
-    name: Lint Dockerfile
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Lint Dockerfile
-        uses: hadolint/hadolint-action@v3.5.0
-        with:
-          dockerfile: "Dockerfile"
+    uses: 0xmichalis/repo-tooling/.github/workflows/dockerfile-lint.yml@657d4c30746413b9a6d4e18a76665b8b4dbd6eb1
 
   docker-publish:
     name: Build, Sign and Push Docker Image
     runs-on: ubuntu-latest
-    needs: [fmt, clippy, test, lint]
+    needs: [checks, lint]
     if: github.ref == 'refs/heads/main' # Only run on main branch
     # Serialize publishing so an older run cannot move latest after a newer one.
     concurrency:

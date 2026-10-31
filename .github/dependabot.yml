@@ -5,7 +5,7 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
-      day: monday
+      day: saturday
       time: "06:00"
     commit-message:
       prefix: ci
@@ -17,7 +17,7 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
-      day: monday
+      day: saturday
       time: "06:00"
     commit-message:
       prefix: build(deps)

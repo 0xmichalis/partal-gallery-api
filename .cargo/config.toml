@@ -1,0 +1,16 @@
+# libtest's `--report-time` (prints per-test wall time next to `ok`) is
+# nightly-gated, and the gate is a runtime check on `RUSTC_BOOTSTRAP` inside the
+# test harness. `runner` prefixes every binary cargo launches (`cargo test`,
+# `run`, `bench`, examples) but never rustc itself — the alternative (`[env]`)
+# would also reach rustc, which flips every crate's fingerprint and silently
+# unlocks `#![feature(..)]` on stable. `env` is not a Windows binary, so this
+# stays scoped to unix.
+[target.'cfg(unix)']
+runner = ["env", "RUSTC_BOOTSTRAP=1"]
+
+[alias]
+# Scoped to compiled test targets (`--tests`): rustdoc runs doctests under its
+# own harness, which is not launched through `runner` and would reject
+# `-Z unstable-options`. Arguments after the alias reach libtest, so test-name
+# filters work; cargo flags go before it (`cargo --locked test-timed`).
+test-timed = "test --tests -- -Z unstable-options --report-time"

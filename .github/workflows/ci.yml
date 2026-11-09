@@ -21,8 +21,25 @@ jobs:
   lint:
     uses: 0xmichalis/repo-tooling/.github/workflows/dockerfile-lint.yml@8f5e2c876d4c1e711bdf8bdea66188daff8e6166
 
+  postgres-only:
+    name: Check PostgreSQL-only dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Reject active SQLite dependencies
+        shell: bash
+        run: |
+          # The SQLite advisory exception requires this crate to stay unused.
+          dependencies="$(cargo tree --locked --workspace --all-features --target all --prefix none --format '{p}')"
+          if grep -q '^libsqlite3-sys ' <<< "$dependencies"; then
+            echo "::error::SQLite is active; remove its audit exception and update to a patched version."
+            exit 1
+          fi
+
   docker-publish:
-    needs: [checks, lint]
+    needs: [checks, lint, postgres-only]
     if: github.ref == 'refs/heads/main'
     # Serialize publishing so an older run cannot move latest after a newer one.
     concurrency:

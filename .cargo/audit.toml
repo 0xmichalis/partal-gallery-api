@@ -4,4 +4,9 @@ ignore = [
     # enables only Postgres; sqlx-mysql and rsa are absent from the build graph.
     # No patched rsa release is available.
     "RUSTSEC-2023-0071",
+    # libsqlite3-sys is an optional sqlx-sqlite dependency in Cargo.lock, absent
+    # from our PostgreSQL-only build. CI enforces that it stays out of the graph.
+    # Published SQLx releases cannot use the patched libsqlite3-sys >=0.39.0.
+    # Remove this exception when SQLx supports it or before enabling SQLite.
+    "RUSTSEC-2026-0459",
 ]

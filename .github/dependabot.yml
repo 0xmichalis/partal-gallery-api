@@ -19,6 +19,9 @@ updates:
       interval: weekly
       day: saturday
       time: "06:00"
+    # Match the Cargo cooldown in .cargo/config.toml, which Dependabot's cargo runs also apply.
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: build(deps)
     groups:

@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{rejection::JsonRejection, DefaultBodyLimit, Path, Request, State},
-    http::{header, StatusCode},
+    Json, Router,
+    extract::{DefaultBodyLimit, Path, Request, State, rejection::JsonRejection},
+    http::{StatusCode, header},
     middleware::{self, Next},
     response::IntoResponse,
     routing::get,
-    Json, Router,
 };
 use subtle::ConstantTimeEq;
 use tracing::error;

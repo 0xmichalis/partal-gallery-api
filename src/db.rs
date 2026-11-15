@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use sqlx::{postgres::PgPoolOptions, postgres::PgRow, PgPool, Row};
+use sqlx::{PgPool, Row, postgres::PgPoolOptions, postgres::PgRow};
 use tracing::warn;
 
 /// A single stored gallery document, keyed by (lowercased) wallet address.

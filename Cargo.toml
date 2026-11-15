@@ -11,7 +11,6 @@ name = "partal-gallery-api"
 path = "src/main.rs"
 
 [dependencies]
-anyhow = "1.0"
 axum = "0.8"
 chrono = { version = "0.4.39", features = ["serde"] }
 clap = { version = "4.3", features = ["derive", "env"] }

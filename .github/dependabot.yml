@@ -19,7 +19,7 @@ updates:
       interval: weekly
       day: saturday
       time: "06:00"
-    # Dependabot writes Cargo.lock itself, and a locked version bypasses Cargo's cooldown.
+    # Match the Cargo cooldown in .cargo/config.toml, which Dependabot's cargo runs also apply.
     cooldown:
       default-days: 7
     commit-message:

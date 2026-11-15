@@ -1,6 +1,6 @@
 use std::fmt;
 
-use time::{macros::format_description, OffsetDateTime, UtcOffset};
+use time::{OffsetDateTime, UtcOffset, macros::format_description};
 use tracing::Level;
 use tracing_subscriber::fmt::format::{FormatFields, Writer};
 use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormattedFields};

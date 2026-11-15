@@ -11,8 +11,8 @@ use tokio::signal;
 use tracing::{error, info};
 
 use crate::db::Db;
-use crate::logging::{should_enable_color, LogLevel};
-use crate::router::{build_router, AppState};
+use crate::logging::{LogLevel, should_enable_color};
+use crate::router::{AppState, build_router};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Gallery storage API for Partal (a self-hosted replacement for Supabase).", long_about = None)]

@@ -19,6 +19,9 @@ updates:
       interval: weekly
       day: saturday
       time: "06:00"
+    # Dependabot writes Cargo.lock itself, and a locked version bypasses Cargo's cooldown.
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: build(deps)
     groups:

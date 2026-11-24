@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, Path, Request, State, rejection::JsonRejection},
-    http::{StatusCode, header},
+    http::{HeaderMap, StatusCode, header},
     middleware::{self, Next},
     response::IntoResponse,
     routing::get,
@@ -14,7 +14,7 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::api::{ApiProblem, GalleryResponse, ProblemJson, PutGalleryRequest};
-use crate::db::Db;
+use crate::db::{Db, GalleryRow, WriteCondition};
 
 /// Maximum request body size for gallery uploads (10 MiB). Galleries store only
 /// minimal NFT references, so this comfortably covers very large collections.
@@ -153,7 +153,7 @@ async fn get_gallery(
 ) -> axum::response::Response {
     let address = normalize_address(&address);
     match state.db.get_gallery(&address).await {
-        Ok(Some(row)) => Json(GalleryResponse::from(row)).into_response(),
+        Ok(Some(row)) => gallery_response(row),
         Ok(None) => ProblemJson::from_status(
             StatusCode::NOT_FOUND,
             Some("Gallery not found".to_string()),
@@ -168,18 +168,24 @@ async fn get_gallery(
     put,
     path = "/v1/galleries/{address}",
     tag = "galleries",
-    params(("address" = String, Path, description = "Wallet address (lowercased server-side)")),
+    params(
+        ("address" = String, Path, description = "Wallet address (lowercased server-side)"),
+        ("If-Match" = Option<String>, Header, description = "Strong ETag from GET; rejects stale writes"),
+        ("If-None-Match" = Option<String>, Header, description = "Use * to create only when absent")
+    ),
     request_body = PutGalleryRequest,
     security(("bearer_auth" = [])),
     responses(
         (status = 200, description = "Upserted gallery document", body = GalleryResponse),
         (status = 400, description = "`data` is not a JSON array, or the body is invalid", body = ApiProblem),
-        (status = 401, description = "Missing or invalid bearer token", body = ApiProblem)
+        (status = 401, description = "Missing or invalid bearer token", body = ApiProblem),
+        (status = 412, description = "Document changed since the read", body = ApiProblem)
     )
 )]
 async fn put_gallery(
     State(state): State<AppState>,
     Path(address): Path<String>,
+    headers: HeaderMap,
     // Take the extractor result so malformed/invalid JSON, wrong content-type,
     // and over-limit bodies become problem+json like every other error path,
     // instead of axum's default text/plain rejection.
@@ -205,8 +211,17 @@ async fn put_gallery(
         .into_response();
     }
 
-    match state.db.upsert_gallery(&address, &body.data).await {
-        Ok(row) => Json(GalleryResponse::from(row)).into_response(),
+    let condition = match write_condition(&headers) {
+        Ok(condition) => condition,
+        Err(problem) => return problem.into_response(),
+    };
+    match state
+        .db
+        .upsert_gallery(&address, &body.data, condition)
+        .await
+    {
+        Ok(Some(row)) => gallery_response(row),
+        Ok(None) => precondition_failed(),
         Err(e) => internal_error("put_gallery", &address, e),
     }
 }
@@ -215,22 +230,75 @@ async fn put_gallery(
     delete,
     path = "/v1/galleries/{address}",
     tag = "galleries",
-    params(("address" = String, Path, description = "Wallet address (lowercased server-side)")),
+    params(
+        ("address" = String, Path, description = "Wallet address (lowercased server-side)"),
+        ("If-Match" = Option<String>, Header, description = "Strong ETag from GET; rejects stale deletes"),
+        ("If-None-Match" = Option<String>, Header, description = "Use * to require absence")
+    ),
     security(("bearer_auth" = [])),
     responses(
+        (status = 400, description = "Invalid write precondition", body = ApiProblem),
         (status = 204, description = "Deleted (idempotent — also 204 when nothing existed)"),
-        (status = 401, description = "Missing or invalid bearer token", body = ApiProblem)
+        (status = 401, description = "Missing or invalid bearer token", body = ApiProblem),
+        (status = 412, description = "Document changed since the read", body = ApiProblem)
     )
 )]
 async fn delete_gallery(
     State(state): State<AppState>,
     Path(address): Path<String>,
+    headers: HeaderMap,
 ) -> axum::response::Response {
     let address = normalize_address(&address);
-    match state.db.delete_gallery(&address).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+    let condition = match write_condition(&headers) {
+        Ok(condition) => condition,
+        Err(problem) => return problem.into_response(),
+    };
+    match state.db.delete_gallery(&address, condition).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => precondition_failed(),
         Err(e) => internal_error("delete_gallery", &address, e),
     }
+}
+
+fn gallery_response(row: GalleryRow) -> axum::response::Response {
+    let etag = format!("\"{}\"", row.revision);
+    ([(header::ETAG, etag)], Json(GalleryResponse::from(row))).into_response()
+}
+
+fn precondition_failed() -> axum::response::Response {
+    ProblemJson::from_status(
+        StatusCode::PRECONDITION_FAILED,
+        Some("Gallery document changed; reload before saving".to_string()),
+        None,
+    )
+    .into_response()
+}
+
+fn write_condition(headers: &HeaderMap) -> Result<WriteCondition, ProblemJson> {
+    let invalid = || {
+        ProblemJson::from_status(
+            StatusCode::BAD_REQUEST,
+            Some("Invalid write precondition".to_string()),
+            None,
+        )
+    };
+    if let Some(value) = headers.get(header::IF_NONE_MATCH) {
+        if value == "*" && !headers.contains_key(header::IF_MATCH) {
+            return Ok(WriteCondition::Absent);
+        }
+        return Err(invalid());
+    }
+    let Some(value) = headers.get(header::IF_MATCH) else {
+        return Ok(WriteCondition::Any);
+    };
+    let value = value.to_str().map_err(|_| invalid())?;
+    let revision = value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .and_then(|value| value.parse::<i64>().ok())
+        .filter(|revision| *revision > 0)
+        .ok_or_else(invalid)?;
+    Ok(WriteCondition::Matches(revision))
 }
 
 fn internal_error(op: &str, address: &str, e: sqlx::Error) -> axum::response::Response {
@@ -281,5 +349,33 @@ mod normalize_address_tests {
             normalize_address(mixed),
             normalize_address(&mixed.to_uppercase())
         );
+    }
+}
+
+#[cfg(test)]
+mod precondition_tests {
+    use super::{WriteCondition, write_condition};
+    use axum::http::{HeaderMap, HeaderValue, header};
+
+    #[test]
+    fn accepts_strong_revision_or_create_only_and_rejects_ambiguous_conditions() {
+        let mut headers = HeaderMap::new();
+        assert!(matches!(write_condition(&headers), Ok(WriteCondition::Any)));
+        headers.insert(header::IF_NONE_MATCH, HeaderValue::from_static("*"));
+        assert!(matches!(
+            write_condition(&headers),
+            Ok(WriteCondition::Absent)
+        ));
+        headers.insert(header::IF_MATCH, HeaderValue::from_static("\"7\""));
+        assert!(write_condition(&headers).is_err());
+        headers.remove(header::IF_NONE_MATCH);
+        assert!(matches!(
+            write_condition(&headers),
+            Ok(WriteCondition::Matches(7))
+        ));
+        for invalid in ["*", "W/\"7\"", "\"0\"", "\"-1\"", "\"1\", \"2\"", "7"] {
+            headers.insert(header::IF_MATCH, HeaderValue::from_str(invalid).unwrap());
+            assert!(write_condition(&headers).is_err(), "{invalid}");
+        }
     }
 }

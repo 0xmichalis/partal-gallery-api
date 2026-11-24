@@ -38,8 +38,28 @@ jobs:
             exit 1
           fi
 
+  concurrency-tests:
+    name: PostgreSQL concurrency tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: cargo test --locked -- --include-ignored
+
   docker-publish:
-    needs: [checks, lint, postgres-only]
+    needs: [checks, lint, postgres-only, concurrency-tests]
     if: github.ref == 'refs/heads/main'
     # Serialize publishing so an older run cannot move latest after a newer one.
     concurrency:

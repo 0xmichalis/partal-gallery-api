@@ -27,6 +27,19 @@ All `/v1` endpoints require `Authorization: Bearer <GALLERY_AUTH_TOKEN>`.
 symmetric regardless of caller casing. Errors are returned as RFC 7807
 `application/problem+json`.
 
+### Concurrent writes
+
+GET and successful PUT responses include a strong `ETag` containing the document
+revision. Send that exact value as `If-Match` when replacing or deleting a
+document, or send `If-None-Match: *` when creating one. A stale precondition
+returns `412` without changing storage. Revisions remain distinct across
+delete/recreate cycles. Missing preconditions retain legacy unconditional
+behavior for older callers.
+
+Deploy this service and its embedded migration before enabling conditional
+writes in the caller. Callers must keep the revision they read and handle
+conflicts; this service cannot protect unconditional legacy writes.
+
 ### OpenAPI
 
 Interactive docs (Swagger UI) are served at `/v1/docs`, and the raw OpenAPI 3

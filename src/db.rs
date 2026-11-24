@@ -9,9 +9,18 @@ use tracing::warn;
 #[derive(Debug, Clone)]
 pub struct GalleryRow {
     pub address: String,
+    pub revision: i64,
     pub data: Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum WriteCondition {
+    /// Compatibility for existing callers during the frontend rollout.
+    Any,
+    Absent,
+    Matches(i64),
 }
 
 #[derive(Clone)]
@@ -74,7 +83,7 @@ impl Db {
     /// Fetch the gallery document for an address, if it exists.
     pub async fn get_gallery(&self, address: &str) -> Result<Option<GalleryRow>, sqlx::Error> {
         let row = sqlx::query(
-            "SELECT address, data, created_at, updated_at FROM galleries WHERE address = $1",
+            "SELECT address, data, created_at, updated_at, revision FROM galleries WHERE address = $1",
         )
         .bind(address)
         .fetch_optional(&self.pool)
@@ -88,40 +97,156 @@ impl Db {
         &self,
         address: &str,
         data: &Value,
-    ) -> Result<GalleryRow, sqlx::Error> {
-        let row = sqlx::query(
-            r#"
-            INSERT INTO galleries (address, data, created_at, updated_at)
-            VALUES ($1, $2, NOW(), NOW())
-            ON CONFLICT (address) DO UPDATE SET
-                data = EXCLUDED.data,
-                updated_at = NOW()
-            RETURNING address, data, created_at, updated_at
-            "#,
-        )
-        .bind(address)
-        .bind(data)
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(row_to_gallery(row))
+        condition: WriteCondition,
+    ) -> Result<Option<GalleryRow>, sqlx::Error> {
+        let query = match condition {
+            WriteCondition::Any => {
+                r#"
+                INSERT INTO galleries (address, data) VALUES ($1, $2)
+                ON CONFLICT (address) DO UPDATE SET data = EXCLUDED.data,
+                    updated_at = NOW(), revision = nextval('gallery_revision_seq')
+                RETURNING address, data, created_at, updated_at, revision
+            "#
+            }
+            WriteCondition::Absent => {
+                r#"
+                INSERT INTO galleries (address, data) VALUES ($1, $2)
+                ON CONFLICT (address) DO NOTHING
+                RETURNING address, data, created_at, updated_at, revision
+            "#
+            }
+            WriteCondition::Matches(_) => {
+                r#"
+                UPDATE galleries SET data = $2, updated_at = NOW(),
+                    revision = nextval('gallery_revision_seq')
+                WHERE address = $1 AND revision = $3
+                RETURNING address, data, created_at, updated_at, revision
+            "#
+            }
+        };
+        let mut query = sqlx::query(query).bind(address).bind(data);
+        if let WriteCondition::Matches(revision) = condition {
+            query = query.bind(revision);
+        }
+        Ok(query.fetch_optional(&self.pool).await?.map(row_to_gallery))
     }
 
-    /// Delete the gallery document for an address. Idempotent: deleting a
-    /// missing address is a no-op (no error).
-    pub async fn delete_gallery(&self, address: &str) -> Result<(), sqlx::Error> {
-        sqlx::query("DELETE FROM galleries WHERE address = $1")
-            .bind(address)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
+    /// Conditional deletes cannot remove a document updated since the caller's read.
+    pub async fn delete_gallery(
+        &self,
+        address: &str,
+        condition: WriteCondition,
+    ) -> Result<bool, sqlx::Error> {
+        match condition {
+            WriteCondition::Absent => Ok(self.get_gallery(address).await?.is_none()),
+            WriteCondition::Matches(revision) => {
+                let result =
+                    sqlx::query("DELETE FROM galleries WHERE address = $1 AND revision = $2")
+                        .bind(address)
+                        .bind(revision)
+                        .execute(&self.pool)
+                        .await?;
+                Ok(result.rows_affected() == 1)
+            }
+            WriteCondition::Any => {
+                sqlx::query("DELETE FROM galleries WHERE address = $1")
+                    .bind(address)
+                    .execute(&self.pool)
+                    .await?;
+                Ok(true)
+            }
+        }
     }
 }
 
 fn row_to_gallery(row: PgRow) -> GalleryRow {
     GalleryRow {
         address: row.get("address"),
+        revision: row.get("revision"),
         data: row.get("data"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
+    }
+}
+
+#[cfg(test)]
+mod concurrency_tests {
+    use super::{Db, WriteCondition};
+    use serde_json::json;
+    use sqlx::PgPool;
+
+    #[sqlx::test]
+    #[ignore = "requires an isolated Postgres DATABASE_URL"]
+    async fn only_one_concurrent_create_or_update_succeeds(pool: PgPool) {
+        let db = Db { pool };
+        let a = json!([{"id": "a"}]);
+        let b = json!([{"id": "b"}]);
+        let (first, second) = tokio::join!(
+            db.upsert_gallery("owner", &a, WriteCondition::Absent),
+            db.upsert_gallery("owner", &b, WriteCondition::Absent),
+        );
+        assert_eq!(
+            usize::from(first.unwrap().is_some()) + usize::from(second.unwrap().is_some()),
+            1
+        );
+        let revision = db.get_gallery("owner").await.unwrap().unwrap().revision;
+        let (first, second) = tokio::join!(
+            db.upsert_gallery("owner", &a, WriteCondition::Matches(revision)),
+            db.upsert_gallery("owner", &b, WriteCondition::Matches(revision)),
+        );
+        assert_eq!(
+            usize::from(first.unwrap().is_some()) + usize::from(second.unwrap().is_some()),
+            1
+        );
+        assert!(
+            db.upsert_gallery("missing", &a, WriteCondition::Matches(revision))
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[sqlx::test]
+    #[ignore = "requires an isolated Postgres DATABASE_URL"]
+    async fn stale_delete_and_delete_recreate_cannot_reuse_a_revision(pool: PgPool) {
+        let db = Db { pool };
+        let data = json!([]);
+        let first = db
+            .upsert_gallery("owner", &data, WriteCondition::Absent)
+            .await
+            .unwrap()
+            .unwrap();
+        let second = db
+            .upsert_gallery("owner", &data, WriteCondition::Matches(first.revision))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            !db.delete_gallery("owner", WriteCondition::Matches(first.revision))
+                .await
+                .unwrap()
+        );
+        assert!(
+            db.delete_gallery("owner", WriteCondition::Matches(second.revision))
+                .await
+                .unwrap()
+        );
+        let recreated = db
+            .upsert_gallery("owner", &data, WriteCondition::Absent)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(recreated.revision > second.revision);
+        assert!(
+            db.upsert_gallery("owner", &data, WriteCondition::Matches(second.revision))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            !db.delete_gallery("owner", WriteCondition::Absent)
+                .await
+                .unwrap()
+        );
     }
 }

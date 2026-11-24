@@ -11,6 +11,8 @@ use crate::db::GalleryRow;
 pub struct GalleryResponse {
     #[schema(example = "0xabc0000000000000000000000000000000000001")]
     pub address: String,
+    /// Monotonic document version, also returned as a strong ETag.
+    pub revision: i64,
     /// The galleries for this address as an opaque JSON array (GalleryMinimal[]).
     #[schema(value_type = Vec<Object>)]
     pub data: serde_json::Value,
@@ -26,6 +28,7 @@ impl From<GalleryRow> for GalleryResponse {
     fn from(row: GalleryRow) -> Self {
         Self {
             address: row.address,
+            revision: row.revision,
             data: row.data,
             created_at: row.created_at.to_rfc3339(),
             updated_at: row.updated_at.to_rfc3339(),

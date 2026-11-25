@@ -2,11 +2,11 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use sqlx::{PgPool, Row, postgres::PgPoolOptions, postgres::PgRow};
+use sqlx::{PgPool, postgres::PgPoolOptions, types::Json};
 use tracing::warn;
 
 /// A single stored gallery document, keyed by (lowercased) wallet address.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct GalleryRow {
     pub address: String,
     pub revision: i64,
@@ -82,13 +82,12 @@ impl Db {
 
     /// Fetch the gallery document for an address, if it exists.
     pub async fn get_gallery(&self, address: &str) -> Result<Option<GalleryRow>, sqlx::Error> {
-        let row = sqlx::query(
+        sqlx::query_as(
             "SELECT address, data, created_at, updated_at, revision FROM galleries WHERE address = $1",
         )
         .bind(address)
         .fetch_optional(&self.pool)
-        .await?;
-        Ok(row.map(row_to_gallery))
+        .await
     }
 
     /// Insert or replace the gallery document for an address, returning the
@@ -96,7 +95,7 @@ impl Db {
     pub async fn upsert_gallery(
         &self,
         address: &str,
-        data: &Value,
+        data: &[Value],
         condition: WriteCondition,
     ) -> Result<Option<GalleryRow>, sqlx::Error> {
         let query = match condition {
@@ -124,11 +123,11 @@ impl Db {
             "#
             }
         };
-        let mut query = sqlx::query(query).bind(address).bind(data);
+        let mut query = sqlx::query_as(query).bind(address).bind(Json(data));
         if let WriteCondition::Matches(revision) = condition {
             query = query.bind(revision);
         }
-        Ok(query.fetch_optional(&self.pool).await?.map(row_to_gallery))
+        query.fetch_optional(&self.pool).await
     }
 
     /// Conditional deletes cannot remove a document updated since the caller's read.
@@ -138,7 +137,13 @@ impl Db {
         condition: WriteCondition,
     ) -> Result<bool, sqlx::Error> {
         match condition {
-            WriteCondition::Absent => Ok(self.get_gallery(address).await?.is_none()),
+            // This precondition only observes whether the key exists.
+            WriteCondition::Absent => {
+                sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM galleries WHERE address = $1)")
+                    .bind(address)
+                    .fetch_one(&self.pool)
+                    .await
+            }
             WriteCondition::Matches(revision) => {
                 let result =
                     sqlx::query("DELETE FROM galleries WHERE address = $1 AND revision = $2")
@@ -159,18 +164,8 @@ impl Db {
     }
 }
 
-fn row_to_gallery(row: PgRow) -> GalleryRow {
-    GalleryRow {
-        address: row.get("address"),
-        revision: row.get("revision"),
-        data: row.get("data"),
-        created_at: row.get("created_at"),
-        updated_at: row.get("updated_at"),
-    }
-}
-
 #[cfg(test)]
-mod concurrency_tests {
+mod tests {
     use super::{Db, WriteCondition};
     use serde_json::json;
     use sqlx::PgPool;
@@ -179,8 +174,8 @@ mod concurrency_tests {
     #[ignore = "requires an isolated Postgres DATABASE_URL"]
     async fn only_one_concurrent_create_or_update_succeeds(pool: PgPool) {
         let db = Db { pool };
-        let a = json!([{"id": "a"}]);
-        let b = json!([{"id": "b"}]);
+        let a = [json!({"id": "a"})];
+        let b = [json!({"id": "b"})];
         let (first, second) = tokio::join!(
             db.upsert_gallery("owner", &a, WriteCondition::Absent),
             db.upsert_gallery("owner", &b, WriteCondition::Absent),
@@ -210,7 +205,7 @@ mod concurrency_tests {
     #[ignore = "requires an isolated Postgres DATABASE_URL"]
     async fn stale_delete_and_delete_recreate_cannot_reuse_a_revision(pool: PgPool) {
         let db = Db { pool };
-        let data = json!([]);
+        let data = [];
         let first = db
             .upsert_gallery("owner", &data, WriteCondition::Absent)
             .await
@@ -245,6 +240,37 @@ mod concurrency_tests {
         );
         assert!(
             !db.delete_gallery("owner", WriteCondition::Absent)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[sqlx::test]
+    #[ignore = "requires an isolated Postgres DATABASE_URL"]
+    async fn absence_check_does_not_decode_legacy_data(pool: PgPool) {
+        let db = Db { pool };
+        // JSONB can store numbers outside serde_json's range.
+        sqlx::query("INSERT INTO galleries (address, data) VALUES ('owner', '[1e400]')")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            db.get_gallery("owner").await,
+            Err(sqlx::Error::ColumnDecode { .. })
+        ));
+        assert!(
+            !db.delete_gallery("owner", WriteCondition::Absent)
+                .await
+                .unwrap()
+        );
+        assert!(
+            db.delete_gallery("owner", WriteCondition::Any)
+                .await
+                .unwrap()
+        );
+        assert!(
+            db.delete_gallery("owner", WriteCondition::Absent)
                 .await
                 .unwrap()
         );

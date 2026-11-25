@@ -8,6 +8,7 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
+use serde_json::Value;
 use subtle::ConstantTimeEq;
 use tracing::error;
 use utoipa::OpenApi;
@@ -202,24 +203,20 @@ async fn put_gallery(
         }
     };
 
-    if !body.data.is_array() {
+    let Value::Array(data) = body.data else {
         return ProblemJson::from_status(
             StatusCode::BAD_REQUEST,
             Some("`data` must be a JSON array of galleries".to_string()),
             Some(instance),
         )
         .into_response();
-    }
+    };
 
     let condition = match write_condition(&headers) {
         Ok(condition) => condition,
         Err(problem) => return problem.into_response(),
     };
-    match state
-        .db
-        .upsert_gallery(&address, &body.data, condition)
-        .await
-    {
+    match state.db.upsert_gallery(&address, &data, condition).await {
         Ok(Some(row)) => gallery_response(row),
         Ok(None) => precondition_failed(),
         Err(e) => internal_error("put_gallery", &address, e),
